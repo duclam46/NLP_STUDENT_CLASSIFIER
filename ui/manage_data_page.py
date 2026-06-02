@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from src.data_manager import load_data, save_data
+from src.data_manager import load_data, save_data, load_stopwords_df, save_stopwords_df
 
 def render_manage_data_page():
     st.markdown("<h1>⚙️ Trung tâm Quản lý Dữ liệu</h1>", unsafe_allow_html=True)
@@ -43,7 +43,11 @@ def render_manage_data_page():
     st.markdown("<br>", unsafe_allow_html=True)
     
     # Use Tabs for different management styles
-    tab_edit, tab_batch = st.tabs(["📑 Chỉnh sửa trực tiếp", "📥 Nhập hàng loạt (Batch)"])
+    tab_edit, tab_batch, tab_stopwords = st.tabs([
+        "📑 Chỉnh sửa trực tiếp",
+        "📥 Nhập hàng loạt (Batch)",
+        "🧾 Stopwords",
+    ])
     
     with tab_edit:
         st.markdown("#### 🛠 Danh sách dữ liệu huấn luyện")
@@ -125,3 +129,61 @@ def render_manage_data_page():
                         st.error("Định dạng không hợp lệ. Vui lòng kiểm tra dấu gạch đứng `|`.")
                 else:
                     st.warning("Vui lòng dán dữ liệu vào ô trên.")
+
+    with tab_stopwords:
+        st.markdown("#### 🧾 Quản lý Stopwords")
+        st.caption("Stopwords lưu ở dạng CSV (cột `word`). Có thể thêm/xoá dòng giống dữ liệu huấn luyện.")
+
+        sw_df = load_stopwords_df()
+        sw_df = sw_df[["word"]].copy() if "word" in sw_df.columns else pd.DataFrame({"word": []})
+        sw_df["word"] = sw_df["word"].fillna("").astype(str)
+
+        m1, m2 = st.columns(2)
+        with m1:
+            st.metric("Tổng stopwords", int((sw_df["word"].str.strip() != "").sum()))
+        with m2:
+            st.metric("Trạng thái", "Sẵn sàng")
+
+        edited_sw = st.data_editor(
+            sw_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "word": st.column_config.TextColumn(
+                    "Stopword",
+                    help="Nhập 1 từ/dạng token mỗi dòng (ví dụ: 'là', 'của', 'như')",
+                    required=True,
+                )
+            },
+            key="stopwords_editor",
+        )
+
+        col_norm, col_save_sw, _ = st.columns([1, 1, 3])
+        with col_norm:
+            if st.button("🧹 Chuẩn hóa", use_container_width=True):
+                normalized = (
+                    edited_sw["word"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
+                normalized = sorted({w for w in normalized.tolist() if w})
+                st.session_state["_stopwords_df"] = pd.DataFrame({"word": normalized})
+                st.rerun()
+
+        if "_stopwords_df" in st.session_state:
+            edited_sw = st.session_state.pop("_stopwords_df")
+            st.info("Đã chuẩn hóa stopwords (lower + unique + sort). Bấm Lưu để ghi ra file.")
+            st.dataframe(edited_sw, use_container_width=True, hide_index=True)
+
+        with col_save_sw:
+            if st.button("💾 Lưu stopwords", use_container_width=True):
+                out = edited_sw.copy()
+                out["word"] = out["word"].fillna("").astype(str).str.strip().str.lower()
+                out = out[out["word"] != ""]
+                out = out.drop_duplicates(subset=["word"]).sort_values("word").reset_index(drop=True)
+                save_stopwords_df(out)
+                from src.preprocessing import reset_stopwords_cache
+                reset_stopwords_cache()
+                st.success("Đã lưu stopwords CSV và áp dụng cho tiền xử lý!")
